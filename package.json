@@ -1,0 +1,23 @@
+{
+  "name": "relay-workflow",
+  "version": "1.0.0",
+  "description": "Relay: a light development workflow for Claude Code and Codex — align requirements in plain language, then verify against them.",
+  "license": "MIT",
+  "bin": {
+    "relay": "bin/relay.js"
+  },
+  "files": [
+    "bin/",
+    "skill/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/logicOuO/relay.git"
+  }
+}
