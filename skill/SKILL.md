@@ -1,11 +1,11 @@
 ---
 name: relay
-description: 开发流程入口与安装器。在任何会修改仓库代码、配置或测试的任务开始前使用：新功能、修 bug、重构、改参数、改默认值；也用于“给项目安装或更新 relay 流程”。纯提问、解释、只读排查不使用。Use before starting any code-changing task in a repository, or to install/update the relay process into a project's AGENTS.md.
+description: relay 开发流程的安装器与兜底入口。用于：给项目安装或更新 relay 流程；或者要修改代码、配置、测试，而项目 AGENTS.md 里没有 relay 段时。项目里已有 relay 段时直接照该段执行，不需要本 Skill。Use to install/update the relay process into a project's AGENTS.md, or before a code-changing task in a project whose AGENTS.md has no relay segment.
 ---
 
 # Relay
 
-流程本身写在项目根目录 AGENTS.md 的 `<!-- relay:begin vN -->` … `<!-- relay:end -->` 段里，这样 Codex、Cursor、Gemini 等读 AGENTS.md 的 AI 不装任何东西也能遵守。本 Skill 只做两件事：在 Claude 里作为入口，以及把流程安装进项目。模板只有一份：[template.md](template.md)。
+流程本身写在项目根目录 AGENTS.md 的 `<!-- relay:begin vN -->` … `<!-- relay:end -->` 段里，这样 Codex、Cursor、Gemini 等读 AGENTS.md 的 AI 不装任何东西也能遵守。本 Skill 只做两件事：在没有 relay 段的项目里作为兜底入口，以及把流程安装进项目。模板只有一份：[template.md](template.md)。
 
 ## 开始改代码前
 

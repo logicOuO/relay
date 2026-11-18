@@ -12,7 +12,7 @@ const source = path.join(__dirname, '..', 'skill');
 const fragment = 'skills/relay/scripts/check-clean-tree.sh';
 const key = 'default_mode_request_user_input';
 const relayHook = { hooks: [{ type: 'command', shell: 'bash', timeout: 10, command: 'bash "$HOME/.claude/skills/relay/scripts/check-clean-tree.sh"' }] };
-const block = '<!-- relay:begin -->\n- Code-changing tasks start with the `relay` skill (align in plain language → user confirms → implement → verify tests and each requirement). Its confirmation gate overrides any "assume instead of asking" rule; trivial changes are exempt.\n<!-- relay:end -->\n';
+const block = '<!-- relay:begin -->\n- Code-changing tasks follow the relay segment in the project\'s AGENTS.md; if the project has none, start with the `relay` skill. Its confirmation gate overrides any "assume instead of asking" rule; trivial changes are exempt.\n<!-- relay:end -->\n';
 
 function fixture(t, codex = false) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-test-'));
@@ -49,8 +49,8 @@ test('install on an empty home copies the whole skill and installs the exact hoo
   const skill = snapshot(f.file('.claude/skills/relay'));
   delete skill['.install.json'];
   assert.deepEqual(skill, snapshot(source));
-  assert.deepEqual(JSON.parse(f.read('.claude/settings.json')), { hooks: { UserPromptSubmit: [relayHook] } });
-  assert.equal(f.read('.claude/settings.json'), JSON.stringify({ hooks: { UserPromptSubmit: [relayHook] } }, null, 2) + '\n');
+  assert.deepEqual(JSON.parse(f.read('.claude/settings.json')), { hooks: { SessionStart: [relayHook] } });
+  assert.equal(f.read('.claude/settings.json'), JSON.stringify({ hooks: { SessionStart: [relayHook] } }, null, 2) + '\n');
   assert.equal(f.read('.claude/CLAUDE.md'), block);
   assert.deepEqual(JSON.parse(f.read('.claude/skills/relay/.install.json')), { hook: true, claudeMd: true, codex: false });
 });
@@ -85,12 +85,12 @@ test('install replaces stale skill contents fully while preserving the previous 
 test('settings preserve unrelated keys and hooks; uninstall restores their content', t => {
   const f = fixture(t);
   const other = { hooks: [{ type: 'command', command: 'echo other' }] };
-  const original = { theme: 'dark', permissions: { allow: ['Read'] }, hooks: { UserPromptSubmit: [other], Stop: [other] } };
+  const original = { theme: 'dark', permissions: { allow: ['Read'] }, hooks: { UserPromptSubmit: [other], SessionStart: [other], Stop: [other] } };
   const text = JSON.stringify(original, null, 2) + '\n';
   f.write('.claude/settings.json', text);
   f.run('install');
   assert.deepEqual(JSON.parse(f.read('.claude/settings.json')), {
-    ...original, hooks: { ...original.hooks, UserPromptSubmit: [other, relayHook] }
+    ...original, hooks: { ...original.hooks, SessionStart: [other, relayHook] }
   });
   assert.equal(f.read('.claude/settings.json.relay-backup'), text);
   const installed = f.read('.claude/settings.json');
@@ -102,8 +102,8 @@ test('settings preserve unrelated keys and hooks; uninstall restores their conte
 test('pre-existing relay hook and unmarked instruction are not duplicated or claimed', t => {
   const f = fixture(t);
   const hook = { hooks: [{ type: 'command', command: `custom ${fragment} --option` }] };
-  const settings = JSON.stringify({ hooks: { UserPromptSubmit: [hook] } });
-  const text = 'Custom tasks start with the `relay` skill, please.\n';
+  const settings = JSON.stringify({ hooks: { SessionStart: [hook] } });
+  const text = "Custom tasks follow the relay segment in the project's AGENTS.md, please.\n";
   f.write('.claude/settings.json', settings);
   f.write('.claude/CLAUDE.md', text);
   f.run('install');
@@ -115,6 +115,75 @@ test('pre-existing relay hook and unmarked instruction are not duplicated or cla
   assert.deepEqual(JSON.parse(f.read('.claude/settings.json')), {});
   assert.equal(f.read('.claude/CLAUDE.md'), text);
 });
+
+for (const otherHooks of [false, true]) {
+  test(`install migrates UserPromptSubmit hooks to one SessionStart hook and retains ownership: other hooks ${otherHooks}`, t => {
+    const f = fixture(t);
+    const other = { hooks: [{ type: 'command', command: 'echo other' }] };
+    const legacy = { command: `bash ${fragment}` };
+    const original = { theme: 'dark', hooks: {
+      UserPromptSubmit: otherHooks ? [legacy, other, relayHook] : [legacy, relayHook],
+      SessionStart: otherHooks ? [relayHook, other, relayHook] : [],
+      Stop: [other]
+    } };
+    const settings = JSON.stringify(original, null, 2) + '\n';
+    f.write('.claude/settings.json', settings);
+    f.write('.claude/skills/relay/.install.json', JSON.stringify({ hook: false, claudeMd: false, codex: false }));
+    if (!otherHooks) assert.match(f.run('status'), /\nhook: not installed\n/);
+    f.run('install');
+    assert.deepEqual(JSON.parse(f.read('.claude/settings.json')), { theme: 'dark', hooks: {
+      ...(otherHooks ? { UserPromptSubmit: [other] } : {}),
+      SessionStart: otherHooks ? [other, relayHook] : [relayHook],
+      Stop: [other]
+    } });
+    assert.equal(f.read('.claude/settings.json.relay-backup'), settings);
+    assert.equal(JSON.parse(f.read('.claude/skills/relay/.install.json')).hook, true);
+    assert.match(f.run('status'), /\nhook: installed\n/);
+    const before = snapshot(f.home);
+    assert.match(f.run('install'), /= hook .*already/);
+    assert.deepEqual(snapshot(f.home), before);
+    f.write('.claude/settings.json', JSON.stringify(original));
+    f.run('uninstall');
+    assert.deepEqual(JSON.parse(f.read('.claude/settings.json')), { theme: 'dark', hooks: {
+      ...(otherHooks ? { UserPromptSubmit: [other], SessionStart: [other] } : {}),
+      Stop: [other]
+    } });
+  });
+}
+
+for (const eol of ['\n', '\r\n']) {
+  test(`install migrates an old unmarked CLAUDE.md line into a removable marked block: ${JSON.stringify(eol)}`, t => {
+    const f = fixture(t);
+    const original = '\uFEFFBefore' + eol + 'Custom tasks start with the `relay` skill, please.' + eol + 'After' + eol;
+    f.write('.claude/CLAUDE.md', original);
+    assert.match(f.run('status'), /\nclaude-md: not installed\n/);
+    f.run('install');
+    const installed = '\uFEFFBefore' + eol + block.replace(/\n/g, eol) + 'After' + eol;
+    assert.equal(f.read('.claude/CLAUDE.md'), installed);
+    assert.equal(f.read('.claude/CLAUDE.md.relay-backup'), original);
+    assert.equal(JSON.parse(f.read('.claude/skills/relay/.install.json')).claudeMd, true);
+    const before = snapshot(f.home);
+    assert.match(f.run('install'), /= claude-md .*already/);
+    assert.deepEqual(snapshot(f.home), before);
+    f.run('uninstall');
+    assert.equal(f.read('.claude/CLAUDE.md'), '\uFEFFBefore' + eol + 'After' + eol);
+    assert.equal(f.read('.claude/CLAUDE.md.relay-backup'), installed);
+  });
+
+  test(`install updates an old marked CLAUDE.md block in place: ${JSON.stringify(eol)}`, t => {
+    const f = fixture(t);
+    const oldBlock = '<!-- relay:begin -->\n- Code-changing tasks start with the `relay` skill (align in plain language → user confirms → implement → verify tests and each requirement). Its confirmation gate overrides any "assume instead of asking" rule; trivial changes are exempt.\n<!-- relay:end -->\n';
+    const original = '\uFEFFBefore' + eol + oldBlock.replace(/\n/g, eol) + 'After' + eol;
+    f.write('.claude/CLAUDE.md', original);
+    f.run('install');
+    assert.equal(f.read('.claude/CLAUDE.md'), '\uFEFFBefore' + eol + block.replace(/\n/g, eol) + 'After' + eol);
+    assert.equal(f.read('.claude/CLAUDE.md.relay-backup'), original);
+    assert.equal(JSON.parse(f.read('.claude/skills/relay/.install.json')).claudeMd, true);
+    const before = snapshot(f.home);
+    assert.match(f.run('install'), /= claude-md .*already/);
+    assert.deepEqual(snapshot(f.home), before);
+  });
+}
 
 for (const original of ['Instructions\n', 'Instructions', 'Instructions\r\n', '\uFEFFInstructions\r\n', '']) {
   test(`CLAUDE.md appends cleanly and restores original bytes: ${JSON.stringify(original)}`, t => {
@@ -203,6 +272,7 @@ test('uninstall drops empty hook containers, removes only marked blocks, and is 
   f.write('.claude/CLAUDE.md', 'Before\n');
   f.run('install');
   f.write('.claude/CLAUDE.md', f.read('.claude/CLAUDE.md') + 'After\n');
+  f.write('.claude/settings.json', JSON.stringify({ theme: 'light', hooks: { SessionStart: [relayHook], UserPromptSubmit: [relayHook] } }));
   f.run('uninstall');
   assert.deepEqual(JSON.parse(f.read('.claude/settings.json')), { theme: 'light' });
   assert.equal(f.read('.claude/CLAUDE.md'), 'Before\nAfter\n');

@@ -18,7 +18,8 @@ const hookFragment = 'skills/relay/scripts/check-clean-tree.sh';
 const flag = 'default_mode_request_user_input';
 const begin = '<!-- relay:begin -->';
 const end = '<!-- relay:end -->';
-const instruction = '- Code-changing tasks start with the `relay` skill (align in plain language → user confirms → implement → verify tests and each requirement). Its confirmation gate overrides any "assume instead of asking" rule; trivial changes are exempt.';
+const instructionMarker = "relay segment in the project's AGENTS.md";
+const instruction = '- Code-changing tasks follow the relay segment in the project\'s AGENTS.md; if the project has none, start with the `relay` skill. Its confirmation gate overrides any "assume instead of asking" rule; trivial changes are exempt.';
 const usage = '用法：relay install [--no-hook] [--no-claude-md] [--no-codex]\n      relay uninstall\n      relay status\n      relay --help\n';
 
 function readText(file) {
@@ -93,12 +94,17 @@ function install(options) {
   } else {
     const settings = readSettings();
     if (settings) {
-      if (settings.data.hooks?.UserPromptSubmit?.some(isRelayHook)) {
+      const legacyHook = settings.data.hooks?.UserPromptSubmit?.some(isRelayHook);
+      if (!legacyHook && settings.data.hooks?.SessionStart?.some(isRelayHook)) {
         already('hook');
       } else {
         settings.data.hooks ??= {};
-        settings.data.hooks.UserPromptSubmit ??= [];
-        settings.data.hooks.UserPromptSubmit.push({ hooks: [{ type: 'command', shell: 'bash', timeout: 10, command: 'bash "$HOME/.claude/skills/relay/scripts/check-clean-tree.sh"' }] });
+        if (legacyHook) {
+          settings.data.hooks.UserPromptSubmit = settings.data.hooks.UserPromptSubmit.filter(entry => !isRelayHook(entry));
+          if (!settings.data.hooks.UserPromptSubmit.length) delete settings.data.hooks.UserPromptSubmit;
+        }
+        settings.data.hooks.SessionStart = (settings.data.hooks.SessionStart || []).filter(entry => !isRelayHook(entry));
+        settings.data.hooks.SessionStart.push({ hooks: [{ type: 'command', shell: 'bash', timeout: 10, command: 'bash "$HOME/.claude/skills/relay/scripts/check-clean-tree.sh"' }] });
         writeSettings(settings);
         manifest.hook = true;
         console.log('✓ hook 已安装');
@@ -110,11 +116,22 @@ function install(options) {
     console.log('= claude-md 已跳过');
   } else {
     const format = readText(claudeFile);
-    if (format.text.includes('start with the `relay` skill')) {
+    const block = [begin, instruction, end].join(format.eol);
+    const markedBlock = /<!-- relay:begin -->[\s\S]*?<!-- relay:end -->/g;
+    const oldLine = /^(?![^\r\n]*relay segment in the project's AGENTS\.md)[^\r\n]*start with the `relay` skill[^\r\n]*/gm;
+    let text = format.text;
+    if (markedBlock.test(text)) {
+      text = text.replace(markedBlock, () => block);
+    } else if (oldLine.test(text)) {
+      text = text.replace(oldLine, () => block);
+    } else if (!text.includes(instructionMarker)) {
+      const separator = text && !text.endsWith('\n') ? format.eol : '';
+      text += separator + block + format.eol;
+    }
+    if (text === format.text) {
       already('claude-md');
     } else {
-      const separator = format.text && !format.text.endsWith('\n') ? format.eol : '';
-      writeText(claudeFile, format.text + separator + [begin, instruction, end, ''].join(format.eol), format);
+      writeText(claudeFile, text, format);
       manifest.claudeMd = true;
       console.log('✓ claude-md 已安装');
     }
@@ -151,10 +168,13 @@ function uninstall() {
   const manifest = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')) : { codex: false };
   if (fs.existsSync(settingsFile)) {
     const settings = readSettings();
-    if (settings?.data.hooks?.UserPromptSubmit?.some(isRelayHook)) {
+    if (settings && ['SessionStart', 'UserPromptSubmit'].some(event => settings.data.hooks?.[event]?.some(isRelayHook))) {
       const hooks = settings.data.hooks;
-      hooks.UserPromptSubmit = hooks.UserPromptSubmit.filter(entry => !isRelayHook(entry));
-      if (!hooks.UserPromptSubmit.length) delete hooks.UserPromptSubmit;
+      for (const event of ['SessionStart', 'UserPromptSubmit']) {
+        if (!hooks[event]) continue;
+        hooks[event] = hooks[event].filter(entry => !isRelayHook(entry));
+        if (!hooks[event].length) delete hooks[event];
+      }
       if (!Object.keys(hooks).length) delete settings.data.hooks;
       writeSettings(settings);
     }
@@ -187,8 +207,8 @@ function status() {
   const settings = fs.existsSync(settingsFile) ? readSettings() : null;
   const states = {
     skill: fs.existsSync(skillDir),
-    hook: Boolean(settings?.data.hooks?.UserPromptSubmit?.some(isRelayHook)),
-    'claude-md': readText(claudeFile).text.includes('start with the `relay` skill'),
+    hook: Boolean(settings?.data.hooks?.SessionStart?.some(isRelayHook)),
+    'claude-md': readText(claudeFile).text.includes(instructionMarker),
     codex: /^\s*default_mode_request_user_input\s*=\s*true\s*(?:#.*)?$/m.test(readText(codexFile).text)
   };
   for (const [name, installed] of Object.entries(states)) {

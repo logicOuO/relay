@@ -30,8 +30,8 @@ npx github:logicOuO/relay install
 | 内容 | 位置 | 跳过参数 |
 | --- | --- | --- |
 | Skill（入口和安装器） | `~/.claude/skills/relay/` | 无 |
-| 工作区检查钩子：每次发消息时，如果有未提交改动就提醒 | `~/.claude/settings.json` 的 `hooks.UserPromptSubmit` | `--no-hook` |
-| 一行全局指令：改代码先走 relay，它的确认门槛优先于“自行假设”一类规则 | `~/.claude/CLAUDE.md` | `--no-claude-md` |
+| 工作区检查钩子：每次新对话开始时检查一次，有未提交改动就提醒 | `~/.claude/settings.json` 的 `hooks.SessionStart` | `--no-hook` |
+| 一行全局指令：改代码按项目 AGENTS.md 的 relay 段执行（没有该段才用 relay skill），确认门槛优先于“自行假设”一类规则 | `~/.claude/CLAUDE.md` | `--no-claude-md` |
 | Codex 默认模式下也能弹选择框 | `~/.codex/config.toml` 的 `[features] default_mode_request_user_input = true` | `--no-codex` |
 
 修改任何文件之前，都会先在同一目录生成 `.relay-backup` 备份。
