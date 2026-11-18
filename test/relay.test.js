@@ -62,7 +62,9 @@ test('a second install leaves all files and backups identical and retains manife
   f.write('.codex/config.toml', 'model = "example"\n');
   f.run('install');
   const before = snapshot(f.home);
-  assert.match(f.run('install'), /already/);
+  const output = f.run('install');
+  assert.match(output, /already/);
+  assert.match(output, /^= codex-skill 已存在（already），跳过$/m);
   assert.deepEqual(snapshot(f.home), before);
   assert.deepEqual(JSON.parse(f.read('.claude/skills/relay/.install.json')), { hook: true, claudeMd: true, codex: true });
   f.run('install', '--no-hook', '--no-claude-md', '--no-codex');
@@ -246,9 +248,50 @@ for (const original of [null, 'model = "example"', 'model = "example"\n']) {
 
 test('Codex is skipped with a note when its directory does not exist', t => {
   const f = fixture(t);
-  assert.match(f.run('install'), /codex.*跳过/);
+  const output = f.run('install');
+  assert.match(output, /codex.*跳过/);
+  assert.match(output, /^= codex-skill 目录不存在，跳过$/m);
+  assert.match(output, /^= codex 目录不存在，跳过$/m);
+  assert.equal(f.exists('.codex/skills/relay'), false);
   assert.equal(f.exists('.codex'), false);
   assert.equal(JSON.parse(f.read('.claude/skills/relay/.install.json')).codex, false);
+});
+
+test('Codex skill copies the entire package skill and fully replaces stale contents including a manifest', t => {
+  const f = fixture(t, true);
+  assert.match(f.run('install'), /^✓ codex-skill 已安装$/m);
+  assert.deepEqual(snapshot(f.file('.codex/skills/relay')), snapshot(source));
+  assert.equal(f.exists('.codex/skills/relay/.install.json'), false);
+  f.write('.codex/skills/relay/.install.json', '{}');
+  assert.match(f.run('install'), /^✓ codex-skill 已安装$/m);
+  assert.deepEqual(snapshot(f.file('.codex/skills/relay')), snapshot(source));
+  f.write('.codex/skills/relay/stale/nested.txt', 'obsolete');
+  f.write('.codex/skills/relay/SKILL.md', 'outdated');
+  assert.match(f.run('install'), /^✓ codex-skill 已安装$/m);
+  assert.deepEqual(snapshot(f.file('.codex/skills/relay')), snapshot(source));
+});
+
+test('--no-codex skips both the Codex skill and dialog flag', t => {
+  const f = fixture(t, true);
+  const output = f.run('install', '--no-codex');
+  assert.match(output, /^= codex-skill 已跳过$/m);
+  assert.match(output, /^= codex 已跳过$/m);
+  assert.equal(f.exists('.codex/skills/relay'), false);
+  assert.equal(f.exists('.codex/config.toml'), false);
+});
+
+test('uninstall removes only the Codex relay skill even without a Claude manifest', t => {
+  const f = fixture(t, true);
+  f.write('.codex/skills/other/SKILL.md', 'Other skill');
+  f.write('.codex/skills/notes.txt', 'Keep me');
+  f.run('install');
+  fs.rmSync(f.file('.claude/skills/relay/.install.json'));
+  f.run('uninstall');
+  assert.equal(f.exists('.codex/skills/relay'), false);
+  assert.deepEqual(snapshot(f.file('.codex/skills')), {
+    other: { 'SKILL.md': Buffer.from('Other skill') },
+    'notes.txt': Buffer.from('Keep me')
+  });
 });
 
 for (const value of ['true', 'false']) {
@@ -335,15 +378,23 @@ test('all skip flags together leave existing configuration bytes untouched', t =
   assert.deepEqual(JSON.parse(f.read('.claude/skills/relay/.install.json')), { hook: false, claudeMd: false, codex: false });
 });
 
-test('status reports four components without changing files', t => {
+test('status reports five components without changing files', t => {
   const f = fixture(t, true);
-  assert.equal(f.run('status'), 'skill: not installed\nhook: not installed\nclaude-md: not installed\ncodex: not installed\n');
+  assert.equal(f.run('status'), 'skill: not installed\ncodex-skill: not installed\nhook: not installed\nclaude-md: not installed\ncodex: not installed\n');
   f.run('install');
   const before = snapshot(f.home);
-  assert.equal(f.run('status'), 'skill: installed\nhook: installed\nclaude-md: installed\ncodex: installed\n');
+  assert.equal(f.run('status'), 'skill: installed\ncodex-skill: installed\nhook: installed\nclaude-md: installed\ncodex: installed\n');
   assert.deepEqual(snapshot(f.home), before);
   f.run('uninstall');
-  assert.equal(f.run('status'), 'skill: not installed\nhook: not installed\nclaude-md: not installed\ncodex: not installed\n');
+  assert.equal(f.run('status'), 'skill: not installed\ncodex-skill: not installed\nhook: not installed\nclaude-md: not installed\ncodex: not installed\n');
+});
+
+test('Codex skill status requires SKILL.md rather than just the directory', t => {
+  const f = fixture(t, true);
+  f.write('.codex/skills/relay/other.txt', 'Existing directory');
+  assert.match(f.run('status'), /^codex-skill: not installed$/m);
+  f.write('.codex/skills/relay/SKILL.md', 'Existing skill');
+  assert.match(f.run('status'), /^codex-skill: installed$/m);
 });
 
 test('--help prints usage successfully without modifying the home', t => {

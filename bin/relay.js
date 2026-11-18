@@ -12,6 +12,7 @@ const sourceDir = path.join(__dirname, '..', 'skill');
 const settingsFile = path.join(claudeDir, 'settings.json');
 const claudeFile = path.join(claudeDir, 'CLAUDE.md');
 const codexDir = path.join(home, '.codex');
+const codexSkillDir = path.join(codexDir, 'skills', 'relay');
 const codexFile = path.join(codexDir, 'config.toml');
 const manifestFile = path.join(skillDir, '.install.json');
 const hookFragment = 'skills/relay/scripts/check-clean-tree.sh';
@@ -87,6 +88,19 @@ function install(options) {
     fs.mkdirSync(path.dirname(skillDir), { recursive: true });
     fs.cpSync(sourceDir, skillDir, { recursive: true });
     console.log('✓ skill 已安装');
+  }
+
+  if (options.includes('--no-codex')) {
+    console.log('= codex-skill 已跳过');
+  } else if (!fs.existsSync(codexDir)) {
+    console.log('= codex-skill 目录不存在，跳过');
+  } else if (sameSkill(sourceDir, codexSkillDir, false)) {
+    already('codex-skill');
+  } else {
+    fs.rmSync(codexSkillDir, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(codexSkillDir), { recursive: true });
+    fs.cpSync(sourceDir, codexSkillDir, { recursive: true });
+    console.log('✓ codex-skill 已安装');
   }
 
   if (options.includes('--no-hook')) {
@@ -201,12 +215,15 @@ function uninstall() {
   console.log('✓ codex 已处理');
   fs.rmSync(skillDir, { recursive: true, force: true });
   console.log('✓ skill 已移除');
+  fs.rmSync(codexSkillDir, { recursive: true, force: true });
+  console.log('✓ codex-skill 已移除');
 }
 
 function status() {
   const settings = fs.existsSync(settingsFile) ? readSettings() : null;
   const states = {
     skill: fs.existsSync(skillDir),
+    'codex-skill': fs.existsSync(path.join(codexSkillDir, 'SKILL.md')),
     hook: Boolean(settings?.data.hooks?.SessionStart?.some(isRelayHook)),
     'claude-md': readText(claudeFile).text.includes(instructionMarker),
     codex: /^\s*default_mode_request_user_input\s*=\s*true\s*(?:#.*)?$/m.test(readText(codexFile).text)
